@@ -1,28 +1,42 @@
-<div class="depots">
-  <mat-table [dataSource]="depots" class="mat-elevation-z8">
+@for (item of items(); track $index) {
+  <mat-label>Anzahl: </mat-label>
+  <input matInput maxlength="3" [value]="item.amount">
+
+  <mat-table [dataSource]="item.shares">
     <ng-container matColumnDef="depot">
-      <mat-header-cell *matHeaderCellDef> Depot </mat-header-cell>
-      <mat-cell *matCellDef="let depot"> {{ depot.name }} </mat-cell>
+      <mat-header-cell *matHeaderCellDef>Depot</mat-header-cell>
+      <mat-cell *matCellDef="let share">{{ share.depot.name }}</mat-cell>
     </ng-container>
 
     <ng-container matColumnDef="half-shares">
-      <mat-header-cell *matHeaderCellDef> Halbe Anteile </mat-header-cell>
-      <mat-cell *matCellDef="let depot"> {{ depot.halfShares }} </mat-cell>
+      <mat-header-cell *matHeaderCellDef>Halbe Anteile</mat-header-cell>
+      <mat-cell *matCellDef="let share">{{ share.depot.halfShares }}</mat-cell>
     </ng-container>
 
     <ng-container matColumnDef="full-shares">
-      <mat-header-cell *matHeaderCellDef> Ganze Anteile </mat-header-cell>
-      <mat-cell *matCellDef="let depot"> {{ depot.fullShares }} </mat-cell>
+      <mat-header-cell *matHeaderCellDef>Ganze Anteile</mat-header-cell>
+      <mat-cell *matCellDef="let share">{{ share.depot.fullShares }}</mat-cell>
     </ng-container>
 
     <ng-container matColumnDef="persons">
-      <mat-header-cell *matHeaderCellDef> Personen </mat-header-cell>
-      <mat-cell *matCellDef="let depot"> {{ depot.persons }} </mat-cell>
+      <mat-header-cell *matHeaderCellDef>Personen</mat-header-cell>
+      <mat-cell *matCellDef="let share">{{ share.depot.persons }}</mat-cell>
     </ng-container>
 
-    <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
-    <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+    <ng-container matColumnDef="per-half-share-amount">
+      <mat-header-cell *matHeaderCellDef># pro HA</mat-header-cell>
+      <mat-cell *matCellDef="let share">{{ share.amountPerHalfShare | number: '1.0-0' }}</mat-cell>
+    </ng-container>
+
+    <ng-container matColumnDef="per-person-amount">
+      <mat-header-cell *matHeaderCellDef># pro Person</mat-header-cell>
+      <mat-cell *matCellDef="let share">{{ share.amountPerPerson }}</mat-cell>
+    </ng-container>
+
+    <!-- Header and Row Declarations -->
+    <mat-header-row *matHeaderRowDef="displayedColumns"></mat-header-row>
+    <mat-row *matRowDef="let row; columns: displayedColumns"></mat-row>
   </mat-table>
-</div>
+}
 
 <router-outlet/>
