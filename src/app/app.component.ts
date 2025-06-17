@@ -74,6 +74,10 @@ export class AppComponent {
     depot.shareFactor = depot.shares / totalShares;
   }
 
+  changeItemAmount(item: Item, amount: string) {
+    this.items.set([...this.items().map(i => i.name === item.name ? {...item, amount: parseInt(amount)} : i)]);
+  }
+
   private addItem(name: string, amount: number) {
     this.items.set([...this.items(), {
       name,
@@ -85,7 +89,7 @@ export class AppComponent {
           isDepotActive: true,
           amountPerHalfShare: 0,
           amountPerPerson: 0
-        }
+        };
       })
     }]);
   }

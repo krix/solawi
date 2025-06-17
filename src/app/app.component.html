@@ -1,6 +1,6 @@
 @for (item of items(); track $index) {
   <mat-label>Anzahl: </mat-label>
-  <input matInput maxlength="3" [value]="item.amount">
+  <input type="number" #amountInput matInput maxlength="3" [value]="item.amount" (input)="changeItemAmount(item, amountInput.value)">
 
   <mat-table [dataSource]="item.shares">
     <ng-container matColumnDef="depot">
