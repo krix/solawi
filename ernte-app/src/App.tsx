@@ -1,8 +1,8 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import './App.css';
 import { UNIQUE_ARTICLES, DEPOTS, ALL_DEPOTS, Article, Depot } from './data';
-import { calculateDistribution, calculatePieceRemainderAllocation, Distribution, getFairnessRatio, getHarvestYear } from './logic';
+import { calculateDistribution, calculatePieceRemainderAllocation, Distribution, getFairnessRatio, getHarvestYear, reconstructDistributionsFromHistory } from './logic';
 import HistoryView from './HistoryView';
 import MasterDataView from './MasterDataView';
 import { backupHistoryFiles, importHistoryFiles } from './backup';
@@ -33,6 +33,9 @@ function App() {
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [availableYears, setAvailableYears] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<string>('');
+  const [historyReady, setHistoryReady] = useState(false);
+  const [masterDataReady, setMasterDataReady] = useState(false);
+  const restorationDone = useRef(false);
 
   // Fetch available years and always load ALL history on startup
   useEffect(() => {
@@ -61,6 +64,7 @@ function App() {
           const args = selectedYear === "Alle" ? {} : { year: selectedYear };
           const raw = await invoke<string>(command, args);
           setHistoryData(JSON.parse(raw));
+          setHistoryReady(true);
         } catch (e) {
           console.error("Failed to load history for year:", selectedYear, e);
         }
@@ -93,12 +97,31 @@ function App() {
 
         setEditableArticlesRaw(initialArticles);
         setEditableDepotsRaw(initialDepots);
+        setMasterDataReady(true);
       } catch (e) {
         console.error("Failed to load master data from backend:", e);
       }
     };
     initMasterData();
   }, []);
+
+  // On startup: if today's history entries exist, restore them as the current distribution.
+  useEffect(() => {
+    if (restorationDone.current) return;
+    if (!historyReady || !masterDataReady) return;
+
+    restorationDone.current = true;
+
+    const today = new Date();
+    const todayStr = `${String(today.getDate()).padStart(2, '0')}.${String(today.getMonth() + 1).padStart(2, '0')}.${today.getFullYear()}`;
+    const todayRows = historyData.filter(row => row.datum === todayStr);
+    if (todayRows.length === 0) return;
+
+    const restored = reconstructDistributionsFromHistory(todayRows, editableDepots);
+    if (restored.length > 0) {
+      setDistributions(restored);
+    }
+  }, [historyReady, masterDataReady, historyData, editableDepots]);
 
   const setEditableArticles = (articles: Article[]) => {
     setEditableArticlesRaw(articles);

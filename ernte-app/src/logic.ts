@@ -251,6 +251,96 @@ export function getHarvestYear(dateStr: string): string {
 }
 
 /**
+ * Reconstructs Distribution objects from today's history rows.
+ * Used to restore the current distribution state on app startup when
+ * history entries for the current day already exist.
+ *
+ * Results are built directly from the stored amounts so that per-depot
+ * values — including any Geschenke (remainder) allocations that were
+ * already applied — are preserved exactly. For kg, history stores net
+ * amounts (×0.95); calculatedAmount is reversed to gross so the UI can
+ * re-apply the net conversion consistently.
+ */
+export function reconstructDistributionsFromHistory(todayRows: any[], depots: Depot[]): Distribution[] {
+  const articleMap = new Map<string, any[]>();
+  for (const row of todayRows) {
+    const unit: UnitType = (row.einheit === 'kg' || row.einheit === 'g') ? 'kg' : 'Stück';
+    const key = `${row.artikel}__${unit}`;
+    if (!articleMap.has(key)) articleMap.set(key, []);
+    articleMap.get(key)!.push({ ...row, _resolvedUnit: unit });
+  }
+
+  const result: Distribution[] = [];
+
+  for (const [, rows] of articleMap) {
+    const articleName: string = rows[0].artikel;
+    const unit: UnitType = rows[0]._resolvedUnit;
+
+    // Index history rows by depot name for fast lookup
+    const rowByDepot = new Map<string, any>();
+    for (const row of rows) {
+      rowByDepot.set(row.depot, row);
+    }
+
+    // A depot is considered included when it has a positive history entry
+    const includedKuerzel = new Set<string>();
+    for (const depot of depots) {
+      const histRow = rowByDepot.get(depot.name) ?? rowByDepot.get(depot.kuerzel);
+      if (histRow && Number(histRow.gesamtMenge) > 0) {
+        includedKuerzel.add(depot.kuerzel);
+      }
+    }
+
+    const excludedDepots = depots
+      .filter(d => !includedKuerzel.has(d.kuerzel))
+      .map(d => d.kuerzel);
+
+    // Build DistributionResult entries directly from history amounts.
+    // For kg: history stores net (gesamtMenge = gross × 0.95); reverse to gross
+    // so the UI can apply toNetKg() again consistently.
+    let totalHarvested = 0;
+    const results: DistributionResult[] = depots.map(depot => {
+      const isExcluded = !includedKuerzel.has(depot.kuerzel);
+      if (isExcluded) {
+        return { depotKuerzel: depot.kuerzel, calculatedAmount: 0, isExcluded: true };
+      }
+      const histRow = rowByDepot.get(depot.name) ?? rowByDepot.get(depot.kuerzel);
+      const net = Number(histRow?.gesamtMenge) || 0;
+      const calculatedAmount = unit === 'kg'
+        ? Math.round((net / 0.95) * 100) / 100
+        : net;
+      totalHarvested += calculatedAmount;
+      return { depotKuerzel: depot.kuerzel, calculatedAmount, isExcluded: false };
+    });
+
+    // Recompute sharePerHalb from the reconstructed totals for display
+    const effectiveTotalAnteile = depots
+      .filter(d => includedKuerzel.has(d.kuerzel))
+      .reduce((s, d) => s + d.gesamtHalbeAnteile, 0);
+    let sharePerHalb = 0;
+    if (effectiveTotalAnteile > 0) {
+      sharePerHalb = unit === 'Stück'
+        ? Math.floor(totalHarvested / effectiveTotalAnteile)
+        : Math.round((totalHarvested / effectiveTotalAnteile) * 100) / 100;
+    }
+
+    result.push({
+      id: Math.random().toString(36).substr(2, 9),
+      articleName,
+      unit,
+      totalHarvested,
+      results,
+      remainder: 0,
+      excludedDepots,
+      geschenkeDepotKuerzel: [],
+      sharePerHalb
+    });
+  }
+
+  return result;
+}
+
+/**
  * Converts history data to CSV format.
  */
 export function convertToCSV(data: any[]): string {
