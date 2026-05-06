@@ -276,9 +276,13 @@ function App() {
   const [printMode, setPrintMode] = useState<'overview' | 'depots' | null>(null);
 
   const handleBackupHistory = async () => {
-    const success = await backupHistoryFiles();
+    if (selectedYear === 'Alle') {
+      alert('Bitte wählen Sie ein spezifisches Erntejahr aus, um ein Backup zu erstellen.');
+      return;
+    }
+    const success = await backupHistoryFiles(selectedYear);
     if (success) {
-      alert('Backup erfolgreich erstellt!');
+      alert(`Backup für ${selectedYear} erfolgreich erstellt!`);
     } else {
       alert('Fehler beim Erstellen des Backups. Weitere Informationen finden Sie in der Konsole.');
     }

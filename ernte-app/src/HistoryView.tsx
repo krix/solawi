@@ -344,8 +344,9 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
             />
             <button
               className="button outline"
-              style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}
+              style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem', opacity: selectedYear === 'Alle' ? 0.5 : 1 }}
               onClick={onBackupHistory}
+              title={selectedYear === 'Alle' ? "Backup nur für spezifische Jahre möglich" : `Backup für ${selectedYear} erstellen`}
             >
               💾 Backup
             </button>
