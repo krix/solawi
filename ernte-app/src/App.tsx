@@ -5,6 +5,7 @@ import { UNIQUE_ARTICLES, DEPOTS, ALL_DEPOTS, Article, Depot } from './data';
 import { calculateDistribution, calculatePieceRemainderAllocation, Distribution, getFairnessRatio, getHarvestYear } from './logic';
 import HistoryView from './HistoryView';
 import MasterDataView from './MasterDataView';
+import { backupHistoryFiles, importHistoryFiles } from './backup';
 
 type PrintRow = {
   id: string;
@@ -250,6 +251,33 @@ function App() {
   };
 
   const [printMode, setPrintMode] = useState<'overview' | 'depots' | null>(null);
+
+  const handleBackupHistory = async () => {
+    const success = await backupHistoryFiles();
+    if (success) {
+      alert('Backup erfolgreich erstellt!');
+    } else {
+      alert('Fehler beim Erstellen des Backups. Weitere Informationen finden Sie in der Konsole.');
+    }
+  };
+
+  const handleImportHistory = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    
+    const fileArray = Array.from(files);
+    const success = await importHistoryFiles(fileArray);
+    
+    if (success) {
+      alert(`${fileArray.length} Datei(en) erfolgreich importiert!`);
+      // Reload history data to reflect changes
+      const command = selectedYear === "Alle" ? 'load_all_history' : 'load_history';
+      const args = selectedYear === "Alle" ? {} : { year: selectedYear };
+      const raw = await invoke<string>(command, args);
+      setHistoryData(JSON.parse(raw));
+    } else {
+      alert('Fehler beim Importieren der Dateien. Weitere Informationen finden Sie in der Konsole.');
+    }
+  };
 
   const round2 = (value: number) => Math.round(value * 100) / 100;
   const toNetKg = (gross: number) => round2(gross * 0.95);
@@ -831,6 +859,8 @@ function App() {
           data={historyData}
           selectedYear={selectedYear}
           onHistoryChange={setHistoryData}
+          onBackupHistory={handleBackupHistory}
+          onImportHistory={handleImportHistory}
           allDepots={[
             ...editableDepots,
             // Include historic depots from data.ts for backward compatibility with old history entries

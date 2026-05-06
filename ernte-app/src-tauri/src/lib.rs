@@ -177,6 +177,22 @@ async fn save_csv_file(handle: tauri::AppHandle, content: String, default_name: 
 }
 
 #[tauri::command]
+async fn save_backup_file(handle: tauri::AppHandle, content: String, file_name: String) -> Result<(), String> {
+    let path = handle.dialog()
+        .file()
+        .set_file_name(file_name)
+        .add_filter("JSON", &["json"])
+        .set_title("Backup speichern")
+        .blocking_save_file();
+
+    if let Some(p) = path {
+        let p_buf: std::path::PathBuf = p.into_path().map_err(|e| e.to_string())?;
+        fs::write(p_buf, content).map_err(|e: std::io::Error| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn sync_history(app: tauri::AppHandle, year: &str, json_content: &str) -> Result<(), String> {
     let base = get_data_dir(&app);
     let json_path = base.join(format!("historie-{}.json", year));
@@ -282,6 +298,7 @@ pub fn run() {
             load_history,
             list_history_years,
             save_csv_file,
+            save_backup_file,
             load_all_history,
             save_master_data,
             load_master_data,

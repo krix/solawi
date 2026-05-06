@@ -14,19 +14,22 @@ interface DepotStat {
 }
 
 interface HistoryViewProps {
-  data: any[]; 
+  data: any[];
   selectedYear: string;
   allDepots: Depot[];
   onHistoryChange?: (newData: any[]) => void;
+  onBackupHistory?: () => void;
+  onImportHistory?: (files: FileList | null) => void;
 }
 
-export default function HistoryView({ data, selectedYear, allDepots, onHistoryChange }: HistoryViewProps) {
+export default function HistoryView({ data, selectedYear, allDepots, onHistoryChange, onBackupHistory, onImportHistory }: HistoryViewProps) {
   const [filterArticle, setFilterArticle] = useState<string>('Alle');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [printingSpecific, setPrintingSpecific] = useState<'depots' | 'harvest' | null>(null);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const handleDateInputChange = (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -108,9 +111,9 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
       const imported = parseCSV(csv);
       if (imported.length > 0) {
         if (window.confirm(`${imported.length} Einträge in das Erntejahr ${selectedYear} importieren?`)) {
-           const updated = [...data, ...imported];
-           onHistoryChange?.(updated);
-           await saveHistory(selectedYear, updated);
+          const updated = [...data, ...imported];
+          onHistoryChange?.(updated);
+          await saveHistory(selectedYear, updated);
         }
       }
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -118,16 +121,27 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
     reader.readAsText(file);
   };
 
+  const handleImportHistoryFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (onImportHistory) {
+      onImportHistory(files);
+    }
+    // Reset input value to allow importing the same file again
+    if (importInputRef.current) importInputRef.current.value = '';
+  };
+
   const baseFilteredData = useMemo(() => {
     if (!startDate && !endDate) return data;
-    
+
     let sTime = startDate ? new Date(startDate).getTime() : 0;
     let eTime = endDate ? new Date(endDate).getTime() : Infinity;
     if (endDate) eTime += 86400000 - 1; // inclusive end of day
 
     return data.filter(row => {
-       const t = parseDate(row.datum);
-       return t >= sTime && t <= eTime;
+      const t = parseDate(row.datum);
+      return t >= sTime && t <= eTime;
     });
   }, [startDate, endDate, data]);
 
@@ -140,30 +154,30 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
   // Aggregation for the Table (Totals & Fairness)
   const stats = useMemo(() => {
     const map = new Map<string, DepotStat>();
-    
+
     // Initialize map
     for (const d of allDepots) {
       map.set(d.kuerzel, { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 });
-      map.set(d.name, { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 }); 
+      map.set(d.name, { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 });
     }
 
-    const filteredData = filterArticle === 'Alle' 
-      ? baseFilteredData 
+    const filteredData = filterArticle === 'Alle'
+      ? baseFilteredData
       : baseFilteredData.filter(d => d.artikel === filterArticle);
 
     for (const row of filteredData) {
       const { depot, gesamtMenge, halberAnteil, einheit } = row;
       let stat = map.get(depot);
-      
+
       if (!stat) {
-         const matched = allDepots.find(d => d.name.toLowerCase() === depot.toLowerCase() || d.kuerzel.toLowerCase() === depot.toLowerCase());
-         if (matched) {
-            stat = { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 };
-            map.set(depot, stat);
-            map.set(matched.kuerzel, stat);
-         }
+        const matched = allDepots.find(d => d.name.toLowerCase() === depot.toLowerCase() || d.kuerzel.toLowerCase() === depot.toLowerCase());
+        if (matched) {
+          stat = { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 };
+          map.set(depot, stat);
+          map.set(matched.kuerzel, stat);
+        }
       }
-      
+
       if (stat) {
         if (einheit === 'g' || einheit === 'kg') {
           stat.kgSum += einheit === 'g' ? (gesamtMenge / 1000) : gesamtMenge;
@@ -178,7 +192,7 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
     return allDepots.map(d => {
       const statName = map.get(d.name);
       const statKuerzel = map.get(d.kuerzel);
-      
+
       return {
         depot: d.name,
         kuerzel: d.kuerzel,
@@ -188,25 +202,25 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
         kgFairSum: (statName?.kgFairSum || 0) + (statKuerzel?.kgFairSum || 0),
         stkFairSum: (statName?.stkFairSum || 0) + (statKuerzel?.stkFairSum || 0)
       };
-    }).sort((a,b) => b.kgSum - a.kgSum);
+    }).sort((a, b) => b.kgSum - a.kgSum);
 
   }, [filterArticle, baseFilteredData]);
 
   // Aggregation for the Timeline Chart (Cumulative over time)
   const chartData = useMemo(() => {
-    if (filterArticle === 'Alle') return []; 
+    if (filterArticle === 'Alle') return [];
 
     const filtered = baseFilteredData.filter(d => d.artikel === filterArticle);
-    
+
     // Build map: Date -> { DateString, deliveries: {} }
     const dateMap = new Map<string, any>();
 
     for (const row of filtered) {
       const { datum, depot, halberAnteil, einheit } = row;
-      
+
       let matchedDepot = allDepots.find(d => d.name === depot || d.kuerzel === depot);
       if (!matchedDepot) {
-          matchedDepot = allDepots.find(d => d.name.toLowerCase() === depot.toLowerCase());
+        matchedDepot = allDepots.find(d => d.name.toLowerCase() === depot.toLowerCase());
       }
       if (!matchedDepot) continue;
 
@@ -215,14 +229,14 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
       if (!dateMap.has(datum)) {
         dateMap.set(datum, { rawDate: datum, sortKey: parseDate(datum), deliveries: {} });
       }
-      
+
       const record = dateMap.get(datum);
       // Accumulate if the same depot has multiple lines on the same day
       record.deliveries[matchedDepot.kuerzel] = (record.deliveries[matchedDepot.kuerzel] || 0) + amountPerHalfShare;
     }
 
     const sortedDates = Array.from(dateMap.values()).sort((a, b) => a.sortKey - b.sortKey);
-    
+
     // Running totals base
     const runningTotals = {} as Record<string, number>;
     allDepots.forEach(d => runningTotals[d.kuerzel] = 0);
@@ -230,13 +244,13 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
     return sortedDates.map(d => {
       // Add today's deliveries to running totals
       for (const kuerzel of Object.keys(d.deliveries)) {
-         runningTotals[kuerzel] += d.deliveries[kuerzel];
+        runningTotals[kuerzel] += d.deliveries[kuerzel];
       }
-      
+
       // Use full date as X key to avoid duplicate labels/clipping artifacts.
       const dataPoint: any = { datum: d.rawDate };
       allDepots.forEach(dep => {
-         dataPoint[dep.kuerzel] = runningTotals[dep.kuerzel];
+        dataPoint[dep.kuerzel] = runningTotals[dep.kuerzel];
       });
       return dataPoint;
     });
@@ -253,10 +267,10 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
   // Aggregation for Total Harvest table (+5% Schwund)
   const harvestStats = useMemo(() => {
     const map = new Map<string, { kgSum: number, stkSum: number }>();
-    
+
     for (const row of baseFilteredData) {
       let { artikel, gesamtMenge, einheit } = row;
-      
+
       if (!map.has(artikel)) map.set(artikel, { kgSum: 0, stkSum: 0 });
       const stat = map.get(artikel)!;
 
@@ -275,7 +289,7 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
         kgSumBrutto: data.kgSum / 0.95, // Netto ÷ 0.95 = Brutto (da Werte bereits 5% Schwund enthalten)
         stkSum: data.stkSum
       };
-    }).sort((a,b) => (b.kgSumBrutto + b.stkSum) - (a.kgSumBrutto + a.stkSum));
+    }).sort((a, b) => (b.kgSumBrutto + b.stkSum) - (a.kgSumBrutto + a.stkSum));
   }, [baseFilteredData]);
 
   return (
@@ -292,7 +306,7 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
           `}
         </style>
       )}
-      
+
       <div className={printingSpecific ? 'no-print' : ''} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -307,9 +321,9 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
             <button className="button outline" style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }} onClick={handleExportCSV}>
               📥 CSV Export
             </button>
-            <button 
-              className="button outline" 
-              style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem', opacity: selectedYear === 'Alle' ? 0.5 : 1 }} 
+            <button
+              className="button outline"
+              style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem', opacity: selectedYear === 'Alle' ? 0.5 : 1 }}
               onClick={() => {
                 if (selectedYear === 'Alle') {
                   alert("Bitte wähle ein spezifisches Erntejahr aus, um Daten zu importieren.");
@@ -321,43 +335,65 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
             >
               📤 CSV Import
             </button>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              style={{ display: 'none' }} 
-              accept=".csv" 
-              onChange={handleImportCSV} 
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              accept=".csv"
+              onChange={handleImportCSV}
+            />
+            <button
+              className="button outline"
+              style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}
+              onClick={onBackupHistory}
+            >
+              💾 Backup
+            </button>
+            <button
+              className="button outline"
+              style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}
+              onClick={() => importInputRef.current?.click()}
+            >
+              🔁 Import
+            </button>
+            <input
+              type="file"
+              ref={importInputRef}
+              style={{ display: 'none' }}
+              accept=".json"
+              onChange={handleImportHistoryFiles}
+              multiple
             />
           </div>
         </div>
-        
+
         <div className="history-date-filter-box" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'var(--color-surface-solid)', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--color-border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'nowrap' }}>
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: '148px' }}>
-            <label style={{ fontSize: '0.8rem', color: 'var(--color-text-light)', marginBottom: '0.2rem' }}>Von</label>
-            <input
-              type="date"
-              className="input"
-              style={{ padding: '0.2rem', fontSize: '0.9rem' }}
-              value={startDate}
-              onChange={e => handleDateInputChange(e, setStartDate)}
-              onKeyDown={handleDateInputKeyDown}
-            />
-          </div>
+              <label style={{ fontSize: '0.8rem', color: 'var(--color-text-light)', marginBottom: '0.2rem' }}>Von</label>
+              <input
+                type="date"
+                className="input"
+                style={{ padding: '0.2rem', fontSize: '0.9rem' }}
+                value={startDate}
+                onChange={e => handleDateInputChange(e, setStartDate)}
+                onKeyDown={handleDateInputKeyDown}
+              />
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: '148px' }}>
-            <label style={{ fontSize: '0.8rem', color: 'var(--color-text-light)', marginBottom: '0.2rem' }}>Bis</label>
-            <input
-              type="date"
-              className="input"
-              style={{ padding: '0.2rem', fontSize: '0.9rem' }}
-              value={endDate}
-              onChange={e => handleDateInputChange(e, setEndDate)}
-              onKeyDown={handleDateInputKeyDown}
-            />
-          </div>
+              <label style={{ fontSize: '0.8rem', color: 'var(--color-text-light)', marginBottom: '0.2rem' }}>Bis</label>
+              <input
+                type="date"
+                className="input"
+                style={{ padding: '0.2rem', fontSize: '0.9rem' }}
+                value={endDate}
+                onChange={e => handleDateInputChange(e, setEndDate)}
+                onKeyDown={handleDateInputKeyDown}
+              />
+            </div>
           </div>
           {(startDate || endDate) && (
-            <button 
+            <button
               type="button"
               className="button outline"
               style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', alignSelf: 'flex-end', whiteSpace: 'nowrap' }}
@@ -371,16 +407,16 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
 
       <div className={printingSpecific ? 'no-print' : ''} style={{ marginBottom: '1.4rem', paddingBottom: '1.2rem', borderBottom: '1px solid rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
-           <label style={{ fontWeight: 500, color: 'var(--color-text)' }}>Verlauf / Fairness pro Artikel anzeigen:</label>
-           <select 
-             className="input" 
-             style={{ minWidth: '200px' }}
-             value={filterArticle} 
-             onChange={e => setFilterArticle(e.target.value)}
-           >
-             <option value="Alle">-- Nur Tabelle (Alle Artikel summiert) --</option>
-             {uniqueArticles.map(a => <option key={a} value={a}>{a}</option>)}
-           </select>
+          <label style={{ fontWeight: 500, color: 'var(--color-text)' }}>Verlauf / Fairness pro Artikel anzeigen:</label>
+          <select
+            className="input"
+            style={{ minWidth: '200px' }}
+            value={filterArticle}
+            onChange={e => setFilterArticle(e.target.value)}
+          >
+            <option value="Alle">-- Nur Tabelle (Alle Artikel summiert) --</option>
+            {uniqueArticles.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
         </div>
 
         {filterArticle !== 'Alle' && chartData.length > 0 && (
@@ -414,11 +450,11 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
                   labelFormatter={(label: any) => formatChartDateLabel(String(label))}
                 />
                 {allDepots.map((d, i) => (
-                  <Line 
-                    key={d.kuerzel} 
-                    type="monotone" 
-                    dataKey={d.kuerzel} 
-                    stroke={`hsl(${i * (360 / allDepots.length)}, 70%, 50%)`} 
+                  <Line
+                    key={d.kuerzel}
+                    type="monotone"
+                    dataKey={d.kuerzel}
+                    stroke={`hsl(${i * (360 / allDepots.length)}, 70%, 50%)`}
                     strokeWidth={2}
                     isAnimationActive={false}
                     dot={{ r: 3 }}
@@ -432,24 +468,24 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
         )}
 
         {filterArticle !== 'Alle' && chartData.length === 0 && (
-           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-light)', background: 'rgba(0,0,0,0.02)', borderRadius: '8px', marginBottom: '2rem' }}>
-             Keine chronologischen Daten für diesen Artikel in diesem Zeitraum vorhanden.
-           </div>
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-light)', background: 'rgba(0,0,0,0.02)', borderRadius: '8px', marginBottom: '2rem' }}>
+            Keine chronologischen Daten für diesen Artikel in diesem Zeitraum vorhanden.
+          </div>
         )}
       </div>
 
       {/* Depot-Lieferstatistik */}
       <div className={`table-container ${printingSpecific === 'harvest' ? 'no-print' : ''}`} style={{ border: printingSpecific === 'depots' ? 'none' : '' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(46, 165, 80, 0.05)', padding: '1rem' }}>
-           <h3 style={{ fontSize: '1.2rem', color: 'var(--color-primary)', margin: 0 }}>Depot-Lieferstatistik (Netto)</h3>
-           <div className="no-print" style={{ display: 'flex', gap: '0.5rem' }}>
-             <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={() => handlePrintSpecific('depots')}>
-                🖨️ Drucken
-             </button>
-             <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={handleExportDepotStats}>
-                📥 CSV
-             </button>
-           </div>
+          <h3 style={{ fontSize: '1.2rem', color: 'var(--color-primary)', margin: 0 }}>Depot-Lieferstatistik (Netto)</h3>
+          <div className="no-print" style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={() => handlePrintSpecific('depots')}>
+              🖨️ Drucken
+            </button>
+            <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={handleExportDepotStats}>
+              📥 CSV
+            </button>
+          </div>
         </div>
         <table>
           <thead>
@@ -470,23 +506,23 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
               return (
                 <tr key={s.kuerzel}>
                   <td style={{ fontWeight: 500 }}>
-                    <span style={{marginRight: '0.5rem', color: '#999'}}>{i+1}.</span>
-                    {s.depot} <span style={{color: '#999', fontSize: '0.85rem'}}>({s.kuerzel})</span>
+                    <span style={{ marginRight: '0.5rem', color: '#999' }}>{i + 1}.</span>
+                    {s.depot} <span style={{ color: '#999', fontSize: '0.85rem' }}>({s.kuerzel})</span>
                   </td>
                   <td style={{ textAlign: 'center', color: 'var(--color-text-light)' }}>
                     {s.gesamtHalbeAnteile}
                   </td>
                   <td style={{ textAlign: 'right', fontWeight: 500, color: 'var(--color-text)' }}>
-                    {s.kgSum > 0 && <span>{s.kgSum.toLocaleString('de-DE', {maximumFractionDigits: 1})} kg</span>}
-                    {s.kgSum > 0 && s.stkSum > 0 && <span style={{margin:'0 0.5rem'}}>|</span>}
+                    {s.kgSum > 0 && <span>{s.kgSum.toLocaleString('de-DE', { maximumFractionDigits: 1 })} kg</span>}
+                    {s.kgSum > 0 && s.stkSum > 0 && <span style={{ margin: '0 0.5rem' }}>|</span>}
                     {s.stkSum > 0 && <span>{s.stkSum.toLocaleString('de-DE')} Stück</span>}
-                    {s.kgSum === 0 && s.stkSum === 0 && <span style={{color: '#aaa'}}>-</span>}
+                    {s.kgSum === 0 && s.stkSum === 0 && <span style={{ color: '#aaa' }}>-</span>}
                   </td>
                   <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-primary)', background: 'rgba(46, 165, 80, 0.02)' }}>
-                    {s.kgSum > 0 && <span>{(kgPerHalf).toLocaleString('de-DE', {maximumFractionDigits: 2})} kg / 1/2 Anteil</span>}
-                    {s.kgSum > 0 && s.stkSum > 0 && <br/>}
-                    {s.stkSum > 0 && <span>{(stkPerHalf).toLocaleString('de-DE', {maximumFractionDigits: 2})} Stk / 1/2 Anteil</span>}
-                    {s.kgSum === 0 && s.stkSum === 0 && <span style={{color: '#aaa'}}>-</span>}
+                    {s.kgSum > 0 && <span>{(kgPerHalf).toLocaleString('de-DE', { maximumFractionDigits: 2 })} kg / 1/2 Anteil</span>}
+                    {s.kgSum > 0 && s.stkSum > 0 && <br />}
+                    {s.stkSum > 0 && <span>{(stkPerHalf).toLocaleString('de-DE', { maximumFractionDigits: 2 })} Stk / 1/2 Anteil</span>}
+                    {s.kgSum === 0 && s.stkSum === 0 && <span style={{ color: '#aaa' }}>-</span>}
                   </td>
                 </tr>
               )
@@ -500,12 +536,12 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(46, 165, 80, 0.05)', padding: '1rem' }}>
           <h3 style={{ fontSize: '1.2rem', color: 'var(--color-primary)', margin: 0 }}>Gesamternte / Gemüsesorte (Brutto, inkl. 5% Schwund)</h3>
           <div className="no-print" style={{ display: 'flex', gap: '0.5rem' }}>
-             <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={() => handlePrintSpecific('harvest')}>
-                🖨️ Drucken
-             </button>
-             <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={handleExportHarvestStats}>
-                📥 CSV
-             </button>
+            <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={() => handlePrintSpecific('harvest')}>
+              🖨️ Drucken
+            </button>
+            <button className="button outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }} onClick={handleExportHarvestStats}>
+              📥 CSV
+            </button>
           </div>
         </div>
         <table>
@@ -517,27 +553,27 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
             </tr>
           </thead>
           <tbody>
-             {harvestStats.length === 0 && (
-                <tr><td colSpan={3} style={{ textAlign: 'center', padding: '2rem' }}>Keine Erntedaten in diesem Zeitraum gefunden.</td></tr>
-             )}
-             {harvestStats.map((h, i) => (
-                <tr key={h.artikel}>
-                   <td style={{ fontWeight: 500 }}>
-                     <span style={{marginRight: '0.5rem', color: '#999'}}>{i+1}.</span>
-                     {h.artikel}
-                   </td>
-                   <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-primary)' }}>
-                      {h.kgSumBrutto > 0 && <span>{h.kgSumBrutto.toLocaleString('de-DE', {maximumFractionDigits: 1})} kg</span>}
-                      {h.kgSumBrutto > 0 && h.stkSum > 0 && <span style={{margin:'0 0.5rem'}}>|</span>}
-                      {h.stkSum > 0 && <span>{h.stkSum.toLocaleString('de-DE')} Stück</span>}
-                   </td>
-                   <td style={{ textAlign: 'right', color: 'var(--color-text-light)' }}>
-                      {h.kgSumNetto > 0 && <span>{h.kgSumNetto.toLocaleString('de-DE', {maximumFractionDigits: 1})} kg</span>}
-                      {h.kgSumNetto > 0 && h.stkSum > 0 && <span style={{margin:'0 0.5rem'}}>|</span>}
-                      {h.stkSum > 0 && <span>{h.stkSum.toLocaleString('de-DE')} Stück</span>}
-                   </td>
-                </tr>
-             ))}
+            {harvestStats.length === 0 && (
+              <tr><td colSpan={3} style={{ textAlign: 'center', padding: '2rem' }}>Keine Erntedaten in diesem Zeitraum gefunden.</td></tr>
+            )}
+            {harvestStats.map((h, i) => (
+              <tr key={h.artikel}>
+                <td style={{ fontWeight: 500 }}>
+                  <span style={{ marginRight: '0.5rem', color: '#999' }}>{i + 1}.</span>
+                  {h.artikel}
+                </td>
+                <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-primary)' }}>
+                  {h.kgSumBrutto > 0 && <span>{h.kgSumBrutto.toLocaleString('de-DE', { maximumFractionDigits: 1 })} kg</span>}
+                  {h.kgSumBrutto > 0 && h.stkSum > 0 && <span style={{ margin: '0 0.5rem' }}>|</span>}
+                  {h.stkSum > 0 && <span>{h.stkSum.toLocaleString('de-DE')} Stück</span>}
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--color-text-light)' }}>
+                  {h.kgSumNetto > 0 && <span>{h.kgSumNetto.toLocaleString('de-DE', { maximumFractionDigits: 1 })} kg</span>}
+                  {h.kgSumNetto > 0 && h.stkSum > 0 && <span style={{ margin: '0 0.5rem' }}>|</span>}
+                  {h.stkSum > 0 && <span>{h.stkSum.toLocaleString('de-DE')} Stück</span>}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
