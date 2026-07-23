@@ -78,8 +78,12 @@ if [ -d "node_modules" ]; then
     echo "  Entferne vorhandene node_modules (Plattformwechsel)..."
     rm -rf node_modules
 fi
-rm -f package-lock.json
-npm install
+if [ -f "package-lock.json" ]; then
+    # Deterministische Installation aus dem Lockfile
+    npm ci
+else
+    npm install
+fi
 
 # 5. Frontend bauen
 echo "[5/6] Baue das Frontend..."
