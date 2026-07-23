@@ -292,6 +292,34 @@ function App() {
     if (!files || files.length === 0) return;
     
     const fileArray = Array.from(files);
+
+    // Prüfen, ob durch den Import bereits vorhandene Historie-Daten überschrieben würden.
+    // Für jede Datei das betroffene Erntejahr aus dem Dateinamen ermitteln.
+    const importYears = fileArray
+      .map(file => file.name.match(/historie-(\d{4})\.json/)?.[1])
+      .filter((year): year is string => Boolean(year));
+
+    try {
+      const existingYears = await invoke<string[]>('list_history_years');
+      const overwriteYears = Array.from(new Set(importYears)).filter(year =>
+        existingYears.includes(year)
+      ).sort();
+
+      if (overwriteYears.length > 0) {
+        const yearList = overwriteYears.join(', ');
+        const confirmed = window.confirm(
+          `⚠️ Achtung: Für folgende Erntejahre sind bereits Daten vorhanden:\n\n` +
+          `${yearList}\n\n` +
+          `Beim Import werden die aktuellen Daten dieser Jahre vollständig überschrieben. ` +
+          `Dieser Vorgang kann nicht rückgängig gemacht werden.\n\n` +
+          `Möchten Sie den Import wirklich fortsetzen?`
+        );
+        if (!confirmed) return;
+      }
+    } catch (e) {
+      console.error('Fehler beim Prüfen vorhandener Historie-Jahre:', e);
+    }
+
     const success = await importHistoryFiles(fileArray);
     
     if (success) {
