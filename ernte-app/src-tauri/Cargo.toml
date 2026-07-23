@@ -1,6 +1,6 @@
 [package]
 name = "ernte-app"
-version = "1.1.5"
+version = "1.2.0"
 description = "Acker App"
 authors = ["Auf dem Acker e.V."]
 edition = "2021"
