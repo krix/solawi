@@ -25,5 +25,10 @@
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^2.1.9"
+  },
+  "overrides": {
+    "@tauri-apps/api": "2.10.1",
+    "@tauri-apps/cli": "2.10.1",
+    "@tauri-apps/plugin-opener": "2.5.3"
   }
 }

@@ -85,6 +85,10 @@ else
     npm install
 fi
 
+echo "  Erzwinge kompatible Tauri-JS-Versionen..."
+npm install --save-exact @tauri-apps/api@2.10.1 @tauri-apps/plugin-opener@2.5.3
+npm install --save-dev --save-exact @tauri-apps/cli@2.10.1
+
 # 5. Frontend bauen
 echo "[5/6] Baue das Frontend..."
 npm run build
