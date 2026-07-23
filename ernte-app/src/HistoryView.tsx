@@ -16,13 +16,12 @@ interface DepotStat {
 interface HistoryViewProps {
   data: any[];
   selectedYear: string;
-  allDepots: Depot[];
   onHistoryChange?: (newData: any[]) => void;
   onBackupHistory?: () => void;
   onImportHistory?: (files: FileList | null) => void;
 }
 
-export default function HistoryView({ data, selectedYear, allDepots, onHistoryChange, onBackupHistory, onImportHistory }: HistoryViewProps) {
+export default function HistoryView({ data, selectedYear, onHistoryChange, onBackupHistory, onImportHistory }: HistoryViewProps) {
   const [filterArticle, setFilterArticle] = useState<string>('Alle');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -68,10 +67,9 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
   };
 
   const handleExportDepotStats = async () => {
-    const headers = ["Depot", "Kuerzel", "Basis Halbe Anteile", "kg Gesamt", "kg pro Halber Anteil", "Stk Gesamt", "Stk pro Halber Anteil"];
+    const headers = ["Depot", "Basis Halbe Anteile", "kg Gesamt", "kg pro Halber Anteil", "Stk Gesamt", "Stk pro Halber Anteil"];
     const rows = stats.map(s => [
       s.depot,
-      s.kuerzel,
       s.gesamtHalbeAnteile,
       s.kgSum.toFixed(2).replace('.', ','),
       s.kgFairSum.toFixed(2).replace('.', ','),
@@ -151,13 +149,48 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'de-DE'));
   }, [baseFilteredData]);
 
+  // Depots are derived exclusively from the history data (independent of current Stammdaten).
+  // The number of half-shares per depot is determined from the most recent record:
+  // gesamtMenge / halberAnteil = number of half-shares.
+  const derivedDepots = useMemo<Depot[]>(() => {
+    const depotNames = new Set<string>();
+    for (const row of data) {
+      if (row.depot) depotNames.add(row.depot);
+    }
+
+    return Array.from(depotNames).map(name => {
+      // Pick the most recent row (by date) with valid values to compute the half-share count.
+      let sample: any = null;
+      let sampleTime = -Infinity;
+      for (const r of data) {
+        if (r.depot !== name || !(r.halberAnteil > 0) || !(r.gesamtMenge > 0)) continue;
+        const t = parseDate(r.datum);
+        if (t >= sampleTime) {
+          sampleTime = t;
+          sample = r;
+        }
+      }
+      const gesamtHalbeAnteile = sample
+        ? Math.round(sample.gesamtMenge / sample.halberAnteil)
+        : 0;
+
+      return {
+        name,
+        kuerzel: name,
+        gesamtHalbeAnteile,
+        halbeAnteile: 0,
+        ganzeAnteile: 0,
+        prozent: 0,
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'de-DE'));
+  }, [data]);
+
   // Aggregation for the Table (Totals & Fairness)
   const stats = useMemo(() => {
     const map = new Map<string, DepotStat>();
 
     // Initialize map
-    for (const d of allDepots) {
-      map.set(d.kuerzel, { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 });
+    for (const d of derivedDepots) {
       map.set(d.name, { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 });
     }
 
@@ -170,41 +203,34 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
       let stat = map.get(depot);
 
       if (!stat) {
-        const matched = allDepots.find(d => d.name.toLowerCase() === depot.toLowerCase() || d.kuerzel.toLowerCase() === depot.toLowerCase());
-        if (matched) {
-          stat = { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 };
-          map.set(depot, stat);
-          map.set(matched.kuerzel, stat);
-        }
+        stat = { kgSum: 0, stkSum: 0, kgFairSum: 0, stkFairSum: 0 };
+        map.set(depot, stat);
       }
 
-      if (stat) {
-        if (einheit === 'g' || einheit === 'kg') {
-          stat.kgSum += einheit === 'g' ? (gesamtMenge / 1000) : gesamtMenge;
-          stat.kgFairSum += einheit === 'g' ? (halberAnteil / 1000) : halberAnteil;
-        } else if (einheit.toLowerCase().includes('stück')) {
-          stat.stkSum += gesamtMenge;
-          stat.stkFairSum += halberAnteil;
-        }
+      if (einheit === 'g' || einheit === 'kg') {
+        stat.kgSum += einheit === 'g' ? (gesamtMenge / 1000) : gesamtMenge;
+        stat.kgFairSum += einheit === 'g' ? (halberAnteil / 1000) : halberAnteil;
+      } else if (einheit.toLowerCase().includes('stück')) {
+        stat.stkSum += gesamtMenge;
+        stat.stkFairSum += halberAnteil;
       }
     }
 
-    return allDepots.map(d => {
-      const statName = map.get(d.name);
-      const statKuerzel = map.get(d.kuerzel);
+    return derivedDepots.map(d => {
+      const stat = map.get(d.name);
 
       return {
         depot: d.name,
         kuerzel: d.kuerzel,
         gesamtHalbeAnteile: d.gesamtHalbeAnteile,
-        kgSum: (statName?.kgSum || 0) + (statKuerzel?.kgSum || 0),
-        stkSum: (statName?.stkSum || 0) + (statKuerzel?.stkSum || 0),
-        kgFairSum: (statName?.kgFairSum || 0) + (statKuerzel?.kgFairSum || 0),
-        stkFairSum: (statName?.stkFairSum || 0) + (statKuerzel?.stkFairSum || 0)
+        kgSum: stat?.kgSum || 0,
+        stkSum: stat?.stkSum || 0,
+        kgFairSum: stat?.kgFairSum || 0,
+        stkFairSum: stat?.stkFairSum || 0
       };
     }).sort((a, b) => b.kgSum - a.kgSum);
 
-  }, [filterArticle, baseFilteredData]);
+  }, [filterArticle, baseFilteredData, derivedDepots]);
 
   // Aggregation for the Timeline Chart (Cumulative over time)
   const chartData = useMemo(() => {
@@ -218,11 +244,7 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
     for (const row of filtered) {
       const { datum, depot, halberAnteil, einheit } = row;
 
-      let matchedDepot = allDepots.find(d => d.name === depot || d.kuerzel === depot);
-      if (!matchedDepot) {
-        matchedDepot = allDepots.find(d => d.name.toLowerCase() === depot.toLowerCase());
-      }
-      if (!matchedDepot) continue;
+      if (!derivedDepots.some(d => d.name === depot)) continue;
 
       let amountPerHalfShare = einheit === 'g' ? (halberAnteil / 1000) : halberAnteil;
 
@@ -232,29 +254,29 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
 
       const record = dateMap.get(datum);
       // Accumulate if the same depot has multiple lines on the same day
-      record.deliveries[matchedDepot.kuerzel] = (record.deliveries[matchedDepot.kuerzel] || 0) + amountPerHalfShare;
+      record.deliveries[depot] = (record.deliveries[depot] || 0) + amountPerHalfShare;
     }
 
     const sortedDates = Array.from(dateMap.values()).sort((a, b) => a.sortKey - b.sortKey);
 
     // Running totals base
     const runningTotals = {} as Record<string, number>;
-    allDepots.forEach(d => runningTotals[d.kuerzel] = 0);
+    derivedDepots.forEach(d => runningTotals[d.name] = 0);
 
     return sortedDates.map(d => {
       // Add today's deliveries to running totals
-      for (const kuerzel of Object.keys(d.deliveries)) {
-        runningTotals[kuerzel] += d.deliveries[kuerzel];
+      for (const depotName of Object.keys(d.deliveries)) {
+        runningTotals[depotName] += d.deliveries[depotName];
       }
 
       // Use full date as X key to avoid duplicate labels/clipping artifacts.
       const dataPoint: any = { datum: d.rawDate };
-      allDepots.forEach(dep => {
-        dataPoint[dep.kuerzel] = runningTotals[dep.kuerzel];
+      derivedDepots.forEach(dep => {
+        dataPoint[dep.name] = runningTotals[dep.name];
       });
       return dataPoint;
     });
-  }, [filterArticle, baseFilteredData]);
+  }, [filterArticle, baseFilteredData, derivedDepots]);
 
   const formatChartDateLabel = (value: string) => {
     if (!value || typeof value !== 'string') return value;
@@ -450,12 +472,12 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
                   formatter={(value: any) => typeof value === 'number' ? value.toFixed(2) : value}
                   labelFormatter={(label: any) => formatChartDateLabel(String(label))}
                 />
-                {allDepots.map((d, i) => (
+                {derivedDepots.map((d, i) => (
                   <Line
-                    key={d.kuerzel}
+                    key={d.name}
                     type="monotone"
-                    dataKey={d.kuerzel}
-                    stroke={`hsl(${i * (360 / allDepots.length)}, 70%, 50%)`}
+                    dataKey={d.name}
+                    stroke={`hsl(${i * (360 / derivedDepots.length)}, 70%, 50%)`}
                     strokeWidth={2}
                     isAnimationActive={false}
                     dot={{ r: 3 }}
@@ -508,7 +530,7 @@ export default function HistoryView({ data, selectedYear, allDepots, onHistoryCh
                 <tr key={s.kuerzel}>
                   <td style={{ fontWeight: 500 }}>
                     <span style={{ marginRight: '0.5rem', color: '#999' }}>{i + 1}.</span>
-                    {s.depot} <span style={{ color: '#999', fontSize: '0.85rem' }}>({s.kuerzel})</span>
+                    {s.depot}
                   </td>
                   <td style={{ textAlign: 'center', color: 'var(--color-text-light)' }}>
                     {s.gesamtHalbeAnteile}

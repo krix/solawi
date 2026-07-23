@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import './App.css';
-import { UNIQUE_ARTICLES, DEPOTS, ALL_DEPOTS, Article, Depot } from './data';
+import { UNIQUE_ARTICLES, DEPOTS, Article, Depot } from './data';
 import { calculateDistribution, calculatePieceRemainderAllocation, Distribution, getFairnessRatio, getHarvestYear, reconstructDistributionsFromHistory } from './logic';
 import HistoryView from './HistoryView';
 import MasterDataView from './MasterDataView';
@@ -893,11 +893,6 @@ function App() {
           onHistoryChange={setHistoryData}
           onBackupHistory={handleBackupHistory}
           onImportHistory={handleImportHistory}
-          allDepots={[
-            ...editableDepots,
-            // Include historic depots from data.ts for backward compatibility with old history entries
-            ...ALL_DEPOTS.filter(d => d.isHistoric && !editableDepots.find(e => e.kuerzel === d.kuerzel))
-          ]}
         />
       )}
 
