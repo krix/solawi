@@ -1,5 +1,7 @@
 import { Depot, UnitType } from './data';
 
+export type DistributionMode = 'halbeAnteile' | 'mitglieder';
+
 export interface DistributionResult {
   depotKuerzel: string;
   calculatedAmount: number; // Base calculated (floor for pcs, exact for kg)
@@ -15,7 +17,8 @@ export interface Distribution {
   remainder: number;        // Unallocated remainder (pieces)
   excludedDepots: string[];
   geschenkeDepotKuerzel: string[]; // Depots selected for remainder distribution
-  sharePerHalb: number;     // Amount equivalent to one half-share
+  sharePerHalb: number;     // Amount per half-share (halbeAnteile mode) or per member (mitglieder mode)
+  distributionMode: DistributionMode;
 }
 
 export interface PieceRemainderAllocation {
@@ -26,31 +29,40 @@ export interface PieceRemainderAllocation {
 }
 
 /**
- * Calculates the exact mathematical share for a depot relative to the active total shares.
+ * Returns the number of members (Mitglieder) for a depot:
+ * half-share holders + full-share holders.
  */
-function getExactShare(amount: number, depotHalbeAnteile: number, effectiveTotalAnteile: number): number {
-  if (effectiveTotalAnteile === 0) return 0;
-  return amount * (depotHalbeAnteile / effectiveTotalAnteile);
+function depotMitglieder(depot: Depot): number {
+  return depot.halbeAnteile + depot.ganzeAnteile;
 }
 
 /**
  * Distributes an article based on the rules, excluding specific depots.
  * Depots list is passed explicitly so editable stammdaten are used.
  */
-export function calculateDistribution(articleName: string, unit: UnitType, amount: number, excludedDepots: string[] = [], depots: Depot[]): Distribution {
+export function calculateDistribution(
+  articleName: string,
+  unit: UnitType,
+  amount: number,
+  excludedDepots: string[] = [],
+  depots: Depot[],
+  mode: DistributionMode = 'halbeAnteile'
+): Distribution {
   let results: DistributionResult[] = [];
   let allocated = 0;
 
-  // Berechne die effektiven Gesamt-Anteile nur aus den NICHT ausgeschlossenen Depots
   const includedDepots = depots.filter(d => !excludedDepots.includes(d.kuerzel));
-  const effectiveTotalAnteile = includedDepots.reduce((sum, d) => sum + d.gesamtHalbeAnteile, 0);
-  
+
+  // Choose the weight function based on the distribution mode
+  const getWeight = (d: Depot) => mode === 'mitglieder' ? depotMitglieder(d) : d.gesamtHalbeAnteile;
+  const effectiveTotal = includedDepots.reduce((sum, d) => sum + getWeight(d), 0);
+
   let sharePerHalb = 0;
-  if (effectiveTotalAnteile > 0) {
+  if (effectiveTotal > 0) {
     if (unit === 'Stück') {
-      sharePerHalb = Math.floor(amount / effectiveTotalAnteile);
+      sharePerHalb = Math.floor(amount / effectiveTotal);
     } else {
-      sharePerHalb = Math.round((amount / effectiveTotalAnteile) * 100) / 100;
+      sharePerHalb = Math.round((amount / effectiveTotal) * 100) / 100;
     }
   }
 
@@ -58,12 +70,12 @@ export function calculateDistribution(articleName: string, unit: UnitType, amoun
     const isExcluded = excludedDepots.includes(depot.kuerzel);
     let calculatedAmount = 0;
 
-    if (!isExcluded && effectiveTotalAnteile > 0) {
+    if (!isExcluded && effectiveTotal > 0) {
+      const weight = getWeight(depot);
       if (unit === 'Stück') {
-        // Ganzes Vielfaches der halben Anteile, damit niemand ein Stück teilen muss
-        calculatedAmount = sharePerHalb * depot.gesamtHalbeAnteile;
+        calculatedAmount = sharePerHalb * weight;
       } else {
-        const exact = getExactShare(amount, depot.gesamtHalbeAnteile, effectiveTotalAnteile);
+        const exact = amount * (weight / effectiveTotal);
         calculatedAmount = Math.round(exact * 100) / 100;
       }
       allocated += calculatedAmount;
@@ -93,28 +105,31 @@ export function calculateDistribution(articleName: string, unit: UnitType, amoun
     remainder = 0;
   }
 
-  return { 
+  return {
     id: Math.random().toString(36).substr(2, 9),
-    articleName, 
-    unit, 
-    totalHarvested: amount, 
-    results, 
-    remainder, 
+    articleName,
+    unit,
+    totalHarvested: amount,
+    results,
+    remainder,
     excludedDepots,
     geschenkeDepotKuerzel: [],
-    sharePerHalb
+    sharePerHalb,
+    distributionMode: mode
   };
 }
 
 /**
- * Distributes piece remainders in full "half-share rounds" across selected depots.
- * One round means each selected depot gets exactly its amount of half-shares.
+ * Distributes piece remainders in full "rounds" across selected depots.
+ * In halbeAnteile mode: one round = each depot gets its gesamtHalbeAnteile pieces.
+ * In mitglieder mode: one round = each depot gets its member count (halbeAnteile + ganzeAnteile) pieces.
  */
 export function calculatePieceRemainderAllocation(
   remainder: number,
   selectedDepotKuerzel: string[],
   excludedDepots: string[],
-  depots: Depot[]
+  depots: Depot[],
+  mode: DistributionMode = 'halbeAnteile'
 ): PieceRemainderAllocation {
   if (remainder <= 0 || selectedDepotKuerzel.length === 0) {
     return {
@@ -134,10 +149,17 @@ export function calculatePieceRemainderAllocation(
     })
     .map(kuerzel => depots.find(d => d.kuerzel === kuerzel))
     .filter((depot): depot is Depot => !!depot)
-    .filter(depot => !excludedDepots.includes(depot.kuerzel) && depot.gesamtHalbeAnteile > 0);
+    .filter(depot => {
+      if (excludedDepots.includes(depot.kuerzel)) return false;
+      return mode === 'mitglieder'
+        ? depotMitglieder(depot) > 0
+        : depot.gesamtHalbeAnteile > 0;
+    });
 
-  const totalHalbeAnteile = selectedDepots.reduce((sum, depot) => sum + depot.gesamtHalbeAnteile, 0);
-  if (totalHalbeAnteile <= 0) {
+  const getWeight = (d: Depot) => mode === 'mitglieder' ? depotMitglieder(d) : d.gesamtHalbeAnteile;
+  const totalWeight = selectedDepots.reduce((sum, depot) => sum + getWeight(depot), 0);
+
+  if (totalWeight <= 0) {
     return {
       allocationsByDepot: {},
       distributedAmount: 0,
@@ -146,7 +168,7 @@ export function calculatePieceRemainderAllocation(
     };
   }
 
-  const rounds = Math.floor(remainder / totalHalbeAnteile);
+  const rounds = Math.floor(remainder / totalWeight);
   if (rounds <= 0) {
     return {
       allocationsByDepot: {},
@@ -160,7 +182,7 @@ export function calculatePieceRemainderAllocation(
   let distributedAmount = 0;
 
   for (const depot of selectedDepots) {
-    const amountForDepot = rounds * depot.gesamtHalbeAnteile;
+    const amountForDepot = rounds * getWeight(depot);
     allocationsByDepot[depot.kuerzel] = amountForDepot;
     distributedAmount += amountForDepot;
   }
@@ -333,7 +355,8 @@ export function reconstructDistributionsFromHistory(todayRows: any[], depots: De
       remainder: 0,
       excludedDepots,
       geschenkeDepotKuerzel: [],
-      sharePerHalb
+      sharePerHalb,
+      distributionMode: 'halbeAnteile'
     });
   }
 

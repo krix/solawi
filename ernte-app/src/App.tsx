@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import './App.css';
 import { UNIQUE_ARTICLES, DEPOTS, Article, Depot } from './data';
-import { calculateDistribution, calculatePieceRemainderAllocation, Distribution, getFairnessRatio, getHarvestYear, reconstructDistributionsFromHistory } from './logic';
+import { calculateDistribution, calculatePieceRemainderAllocation, Distribution, DistributionMode, getFairnessRatio, getHarvestYear, reconstructDistributionsFromHistory } from './logic';
 import HistoryView from './HistoryView';
 import MasterDataView from './MasterDataView';
 import { backupHistoryFiles, importHistoryFiles } from './backup';
@@ -75,6 +75,7 @@ function App() {
 
   const [editableArticles, setEditableArticlesRaw] = useState<Article[]>(UNIQUE_ARTICLES);
   const [editableDepots, setEditableDepotsRaw] = useState<Depot[]>(DEPOTS);
+  const [distributionMode, setDistributionMode] = useState<DistributionMode>('halbeAnteile');
 
   // Initial load from backend JSON file only
   useEffect(() => {
@@ -176,7 +177,7 @@ function App() {
         rounds: 0
       };
     }
-    return calculatePieceRemainderAllocation(dist.remainder, dist.geschenkeDepotKuerzel, dist.excludedDepots, editableDepots);
+    return calculatePieceRemainderAllocation(dist.remainder, dist.geschenkeDepotKuerzel, dist.excludedDepots, editableDepots, dist.distributionMode);
   };
 
   const handleAddHarvest = () => {
@@ -190,7 +191,7 @@ function App() {
       return;
     }
 
-    const newDist = calculateDistribution(article.name, article.unit, amount, [], editableDepots);
+    const newDist = calculateDistribution(article.name, article.unit, amount, [], editableDepots, distributionMode);
     setDistributions(prev => [newDist, ...prev]);
     setAmount('');
   };
@@ -209,7 +210,7 @@ function App() {
           newExcluded.push(depotKuerzel);
         }
 
-        let recalcDist = calculateDistribution(dist.articleName, dist.unit, dist.totalHarvested, newExcluded, editableDepots);
+        let recalcDist = calculateDistribution(dist.articleName, dist.unit, dist.totalHarvested, newExcluded, editableDepots, dist.distributionMode);
         recalcDist.id = dist.id;
         recalcDist.geschenkeDepotKuerzel = (
           recalcDist.unit === 'Stück' && recalcDist.remainder > 0
@@ -260,7 +261,7 @@ function App() {
     if (newAmount < 0) return;
     setDistributions(distributions.map(dist => {
       if (dist.id === distId) {
-        let recalcDist = calculateDistribution(dist.articleName, dist.unit, newAmount, dist.excludedDepots, editableDepots);
+        let recalcDist = calculateDistribution(dist.articleName, dist.unit, newAmount, dist.excludedDepots, editableDepots, dist.distributionMode);
         recalcDist.id = dist.id;
         recalcDist.geschenkeDepotKuerzel = (
           recalcDist.unit === 'Stück' && recalcDist.remainder > 0
@@ -274,6 +275,20 @@ function App() {
   };
 
   const [printMode, setPrintMode] = useState<'overview' | 'depots' | null>(null);
+
+  const handleChangeDistributionMode = (newMode: DistributionMode) => {
+    setDistributionMode(newMode);
+    setDistributions(prev => prev.map(dist => {
+      const recalc = calculateDistribution(dist.articleName, dist.unit, dist.totalHarvested, dist.excludedDepots, editableDepots, newMode);
+      recalc.id = dist.id;
+      recalc.geschenkeDepotKuerzel = (
+        recalc.unit === 'Stück' && recalc.remainder > 0
+          ? dist.geschenkeDepotKuerzel.filter(k => !recalc.excludedDepots.includes(k))
+          : []
+      );
+      return recalc;
+    }));
+  };
 
   const handleBackupHistory = async () => {
     if (selectedYear === 'Alle') {
@@ -371,14 +386,20 @@ function App() {
 
         if (isExcluded || totalDepotAmount <= 0) continue;
 
-        const perHalb = totalDepotAmount / depot.gesamtHalbeAnteile;
+        // In 'mitglieder' mode every member (half or full) gets the same amount,
+        // so perGanz = perHalb. In 'halbeAnteile' mode a full share = 2× a half share.
+        const isMitgliederMode = dist.distributionMode === 'mitglieder';
+        const mitglieder = depot.halbeAnteile + depot.ganzeAnteile;
+        const perHalb = isMitgliederMode
+          ? (mitglieder > 0 ? totalDepotAmount / mitglieder : 0)
+          : totalDepotAmount / depot.gesamtHalbeAnteile;
         byDepot[depot.kuerzel].push({
           id: dist.id,
           articleName: dist.articleName,
           unit: dist.unit,
           totalAmount: totalDepotAmount,
           perHalb,
-          perGanz: perHalb * 2
+          perGanz: isMitgliederMode ? perHalb : perHalb * 2
         });
 
         amountsByDepot[depot.kuerzel] = totalDepotAmount;
@@ -553,7 +574,7 @@ function App() {
                 <section key={depot.kuerzel} className="print-depot-block">
                   <h2>Depot: {depot.name}</h2>
                   <p style={{ marginBottom: '1rem', color: '#666', display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-                    <span>Gesamt: {depot.gesamtHalbeAnteile} Halbe Anteile ({depot.halbeAnteile} Halbe, {depot.ganzeAnteile} Ganze)</span>
+                    <span>{depot.halbeAnteile + depot.ganzeAnteile} Mitglieder / {depot.gesamtHalbeAnteile} halbe Anteile ({depot.halbeAnteile} Halbe + {depot.ganzeAnteile} Ganze)</span>
                     <span style={{ marginLeft: 'auto', textAlign: 'right' }}>Datum: {printDate}</span>
                   </p>
 
@@ -562,8 +583,8 @@ function App() {
                       <tr>
                         <th style={{ borderBottom: '2px solid black', padding: '8px' }}>Artikel</th>
                         <th style={{ borderBottom: '2px solid black', padding: '8px' }}>Gesamtmenge</th>
-                        <th style={{ borderBottom: '2px solid black', padding: '8px' }}>Einen halben Anteil</th>
-                        <th style={{ borderBottom: '2px solid black', padding: '8px' }}>Einen ganzen Anteil</th>
+                        <th style={{ borderBottom: '2px solid black', padding: '8px' }}>Menge für halben Anteil</th>
+                        <th style={{ borderBottom: '2px solid black', padding: '8px' }}>Menge je ganzen Anteil</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -700,6 +721,40 @@ function App() {
                 ＋ Zur Verteilung hinzufügen
               </button>
             </div>
+
+            {/* Distribution mode toggle */}
+            <div className="glass-panel" style={{ padding: '1.25rem' }}>
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>⚖️ Berechnungsmodus</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: distributionMode === 'halbeAnteile' ? 600 : 400 }}>
+                  <input
+                    type="radio"
+                    name="distributionMode"
+                    value="halbeAnteile"
+                    checked={distributionMode === 'halbeAnteile'}
+                    onChange={() => handleChangeDistributionMode('halbeAnteile')}
+                    style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                  />
+                  Nach halben Anteilen
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: distributionMode === 'mitglieder' ? 600 : 400 }}>
+                  <input
+                    type="radio"
+                    name="distributionMode"
+                    value="mitglieder"
+                    checked={distributionMode === 'mitglieder'}
+                    onChange={() => handleChangeDistributionMode('mitglieder')}
+                    style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                  />
+                  Nach Mitgliederzahl
+                </label>
+              </div>
+              {distributionMode === 'mitglieder' && (
+                <div style={{ marginTop: '0.75rem', background: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.5)', borderRadius: '8px', padding: '0.6rem 0.85rem', fontSize: '0.82rem', color: '#92400e', lineHeight: 1.5 }}>
+                  ⚠️ <strong>Hinweis:</strong> In diesem Modus werden halbe und ganze Anteile gleich gewichtet (jede Person zählt gleich). Die Verteilung nach <em>halben Anteilen</em> ist die bevorzugte Methode, da sie Mitglieder mit ganzem Anteil entsprechend höher gewichtet.
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Main Area / Distributions */}
@@ -740,7 +795,10 @@ function App() {
                         )}
                       </div>
                       <span style={{ fontSize: '0.95rem', color: 'var(--color-text-light)' }}>
-                        Rechnerisch entspricht ein <strong style={{ color: 'var(--color-primary)' }}>halber Anteil ca. {dist.unit === 'kg' ? `${Math.round(dist.sharePerHalb * 1000).toLocaleString('de-DE')} g` : `${dist.sharePerHalb} ${dist.unit}`}</strong>.
+                        {dist.distributionMode === 'mitglieder'
+                          ? <>Rechnerisch entfallen auf <strong style={{ color: 'var(--color-primary)' }}>ein Mitglied ca. {dist.unit === 'kg' ? `${Math.round(dist.sharePerHalb * 1000).toLocaleString('de-DE')} g` : `${dist.sharePerHalb} ${dist.unit}`}</strong>.</>
+                          : <>Rechnerisch entspricht ein <strong style={{ color: 'var(--color-primary)' }}>halber Anteil ca. {dist.unit === 'kg' ? `${Math.round(dist.sharePerHalb * 1000).toLocaleString('de-DE')} g` : `${dist.sharePerHalb} ${dist.unit}`}</strong>.</>
+                        }
                       </span>
                       {dist.unit === 'Stück' && dist.sharePerHalb < 1 && (
                         <div style={{ background: 'rgba(225, 29, 72, 0.1)', color: 'var(--color-danger)', padding: '0.5rem 1rem', borderRadius: '8px', border: '1px solid var(--color-danger)', fontSize: '0.85rem', marginTop: '0.55rem' }}>
@@ -757,7 +815,7 @@ function App() {
                           </div>
                           {dist.unit === 'Stück' ? (
                             <div style={{ fontSize: '0.85rem', color: 'var(--color-text-light)' }}>
-                              Wähle unten Depots aus, auf die der Rest gleichmäßig verteilt wird (in vollen halben-Anteil-Runden).
+                              Wähle unten Depots aus, auf die der Rest gleichmäßig verteilt wird (in vollen {dist.distributionMode === 'mitglieder' ? 'Mitglieder-Runden' : 'halben-Anteil-Runden'}).
                               <div style={{ marginTop: '0.35rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                                 <button
                                   type="button"
@@ -825,7 +883,7 @@ function App() {
                               <th>Netto (kg)</th>
                             </>
                           ) : (
-                            <th>St. pro ½ Anteil</th>
+                            <th>{dist.distributionMode === 'mitglieder' ? 'St. pro Mitglied' : 'St. pro ½ Anteil'}</th>
                           )}
                           {dist.unit === 'Stück' && dist.remainder > 0 && <th>Rest zuteilen</th>}
                         </tr>
@@ -852,7 +910,10 @@ function App() {
                               <td>
                                 {res.depotKuerzel} {indicator}
                                 <span style={{ marginLeft: '0.5rem', color: 'var(--color-text-light)', fontSize: '0.85rem' }}>
-                                  ({matchedDepot?.gesamtHalbeAnteile} halbe Ant.)
+                                  {dist.distributionMode === 'mitglieder'
+                                    ? `(${(matchedDepot?.halbeAnteile ?? 0) + (matchedDepot?.ganzeAnteile ?? 0)} Mitgl.)`
+                                    : `(${matchedDepot?.gesamtHalbeAnteile} halbe Ant.)`
+                                  }
                                 </span>
                                 {res.isExcluded && <i style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: 'var(--color-danger)' }}>(ausgeschl.)</i>}
                               </td>
@@ -875,9 +936,11 @@ function App() {
                                     ? '-'
                                     : (() => {
                                       const totalForDepot = round2(res.calculatedAmount + (remainderAllocation.allocationsByDepot[res.depotKuerzel] || 0));
-                                      const halbeAnteile = matchedDepot?.gesamtHalbeAnteile ?? 1;
-                                      const perHalb = halbeAnteile > 0 ? Math.round(totalForDepot / halbeAnteile) : 0;
-                                      return perHalb.toString();
+                                      const divisor = dist.distributionMode === 'mitglieder'
+                                        ? ((matchedDepot?.halbeAnteile ?? 0) + (matchedDepot?.ganzeAnteile ?? 0))
+                                        : (matchedDepot?.gesamtHalbeAnteile ?? 1);
+                                      const perUnit = divisor > 0 ? Math.round(totalForDepot / divisor) : 0;
+                                      return perUnit.toString();
                                     })()}
                                 </td>
                               )}
