@@ -576,7 +576,12 @@ function App() {
             className="app-logo"
           />
           <div>
-            <h1 style={{ color: 'var(--color-primary)' }}>AckerApp</h1>
+            <h1 style={{ color: 'var(--color-primary)' }}>
+              AckerApp
+              <span style={{ fontSize: '0.55em', fontWeight: 'normal', color: 'var(--color-text-light)', marginLeft: '0.4rem' }}>
+                v{__APP_VERSION__}
+              </span>
+            </h1>
             <p style={{ color: 'var(--color-text-light)' }}>Offline Depot-Verwaltung &amp; Ernteplanung</p>
           </div>
         </div>
