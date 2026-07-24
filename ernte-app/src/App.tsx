@@ -75,7 +75,9 @@ function App() {
 
   const [editableArticles, setEditableArticlesRaw] = useState<Article[]>(UNIQUE_ARTICLES);
   const [editableDepots, setEditableDepotsRaw] = useState<Depot[]>(DEPOTS);
-  const [distributionMode, setDistributionMode] = useState<DistributionMode>('halbeAnteile');
+  // New articles always start in the preferred "halbe Anteile" mode.
+  // The mode can still be changed individually per article afterwards.
+  const DEFAULT_DISTRIBUTION_MODE: DistributionMode = 'halbeAnteile';
 
   // Initial load from backend JSON file only
   useEffect(() => {
@@ -191,7 +193,7 @@ function App() {
       return;
     }
 
-    const newDist = calculateDistribution(article.name, article.unit, amount, [], editableDepots, distributionMode);
+    const newDist = calculateDistribution(article.name, article.unit, amount, [], editableDepots, DEFAULT_DISTRIBUTION_MODE);
     setDistributions(prev => [newDist, ...prev]);
     setAmount('');
   };
@@ -276,9 +278,12 @@ function App() {
 
   const [printMode, setPrintMode] = useState<'overview' | 'depots' | null>(null);
 
-  const handleChangeDistributionMode = (newMode: DistributionMode) => {
-    setDistributionMode(newMode);
+  // Change the calculation mode for a single distribution (per-article) and
+  // recalculate only that article, preserving valid Geschenke selections.
+  const handleChangeDistributionModeForDist = (distId: string, newMode: DistributionMode) => {
     setDistributions(prev => prev.map(dist => {
+      if (dist.id !== distId) return dist;
+      if (dist.distributionMode === newMode) return dist;
       const recalc = calculateDistribution(dist.articleName, dist.unit, dist.totalHarvested, dist.excludedDepots, editableDepots, newMode);
       recalc.id = dist.id;
       recalc.geschenkeDepotKuerzel = (
@@ -721,40 +726,6 @@ function App() {
                 ＋ Zur Verteilung hinzufügen
               </button>
             </div>
-
-            {/* Distribution mode toggle */}
-            <div className="glass-panel" style={{ padding: '1.25rem' }}>
-              <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>⚖️ Berechnungsmodus</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: distributionMode === 'halbeAnteile' ? 600 : 400 }}>
-                  <input
-                    type="radio"
-                    name="distributionMode"
-                    value="halbeAnteile"
-                    checked={distributionMode === 'halbeAnteile'}
-                    onChange={() => handleChangeDistributionMode('halbeAnteile')}
-                    style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
-                  />
-                  Nach halben Anteilen
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: distributionMode === 'mitglieder' ? 600 : 400 }}>
-                  <input
-                    type="radio"
-                    name="distributionMode"
-                    value="mitglieder"
-                    checked={distributionMode === 'mitglieder'}
-                    onChange={() => handleChangeDistributionMode('mitglieder')}
-                    style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
-                  />
-                  Nach Mitgliederzahl
-                </label>
-              </div>
-              {distributionMode === 'mitglieder' && (
-                <div style={{ marginTop: '0.75rem', background: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.5)', borderRadius: '8px', padding: '0.6rem 0.85rem', fontSize: '0.82rem', color: '#92400e', lineHeight: 1.5 }}>
-                  ⚠️ <strong>Hinweis:</strong> In diesem Modus werden halbe und ganze Anteile gleich gewichtet (jede Person zählt gleich). Die Verteilung nach <em>halben Anteilen</em> ist die bevorzugte Methode, da sie Mitglieder mit ganzem Anteil entsprechend höher gewichtet.
-                </div>
-              )}
-            </div>
           </div>
 
           {/* Main Area / Distributions */}
@@ -805,6 +776,42 @@ function App() {
                           ⚠️ <strong>Achtung:</strong> Die Menge reicht nicht für mindestens 1 Stück pro Person. Bitte Depots ausschließen!
                         </div>
                       )}
+
+                      {/* Per-article calculation mode toggle */}
+                      <div style={{ marginTop: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text-light)' }} title="Berechnungsmodus für diesen Artikel">⚖️ Modus:</span>
+                        <div style={{ display: 'inline-flex', border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'hidden' }}>
+                          {([
+                            { mode: 'halbeAnteile' as DistributionMode, label: 'Halbe Anteile' },
+                            { mode: 'mitglieder' as DistributionMode, label: 'Mitglieder' },
+                          ]).map(({ mode, label }, i) => {
+                            const active = dist.distributionMode === mode;
+                            return (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => handleChangeDistributionModeForDist(dist.id, mode)}
+                                title={mode === 'halbeAnteile'
+                                  ? 'Nach halben Anteilen (ganze Anteile zählen doppelt)'
+                                  : 'Nach Mitgliederzahl (jede Person zählt gleich)'}
+                                style={{
+                                  border: 'none',
+                                  borderLeft: i === 1 ? '1px solid var(--color-border)' : 'none',
+                                  background: active ? 'var(--color-primary)' : 'var(--color-surface-solid)',
+                                  color: active ? 'white' : 'var(--color-text)',
+                                  fontWeight: active ? 600 : 400,
+                                  fontSize: '0.78rem',
+                                  padding: '0.28rem 0.6rem',
+                                  cursor: 'pointer',
+                                  transition: 'var(--transition)'
+                                }}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'end', gap: '0.75rem', flex: '1 1 68%', minWidth: 0 }}>
