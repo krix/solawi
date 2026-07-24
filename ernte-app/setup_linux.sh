@@ -93,8 +93,8 @@ echo "  Gleiche Tauri-JS-Versionen an die Rust-Crates an..."
 # CRLF-sicher (falls Cargo.lock mit Windows-Zeilenenden eingecheckt wurde):
 RUST_TAURI_VERSION=$(awk '{sub(/\r$/,"")} $0=="name = \"tauri\""{f=1;next} f&&/^version = /{gsub(/[",]/,"",$3);print $3;exit}' src-tauri/Cargo.lock)
 if [ -z "$RUST_TAURI_VERSION" ]; then
-    echo "  WARNUNG: Konnte tauri-Version nicht aus Cargo.lock lesen. Nutze Fallback 2.10."
-    TAURI_MINOR="2.10"
+    echo "  WARNUNG: Konnte tauri-Version nicht aus Cargo.lock lesen. Nutze Fallback 2.11."
+    TAURI_MINOR="2.11"
 else
     TAURI_MINOR=$(echo "$RUST_TAURI_VERSION" | cut -d. -f1,2)
     echo "  Rust-Crate 'tauri' = $RUST_TAURI_VERSION  -> Ziel-Minor fuer JS: $TAURI_MINOR"
